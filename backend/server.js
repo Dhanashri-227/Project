@@ -2,11 +2,15 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { connectDB } from './db.js';
 import { TeacherModel } from './models/Teacher.js';
 import { StudentModel } from './models/Student.js';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.join(__dirname, '.env') });
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -16,21 +20,7 @@ app.use(express.json());
 
 // In-Memory Fallback Store (active if MongoDB is unavailable)
 const inMemoryStore = {
-  teachers: [
-    {
-      id: 'teacher_demo_10a',
-      _id: 'teacher_demo_10a',
-      name: 'Rajesh Sharma',
-      email: 'teacher@school.edu',
-      password: 'password123',
-      schoolName: 'Delhi Public School',
-      assignedClass: 'Class 10',
-      assignedSection: 'A',
-      subjectSpecialization: 'Mathematics & Science',
-      role: 'Class Teacher',
-      createdAt: new Date().toISOString(),
-    },
-  ],
+  teachers: [],
   students: [],
 };
 
@@ -720,79 +710,8 @@ async function startServer() {
       }
     }
 
-    // Seed second demo school (Delhi Public School, Class 9-A) if not already present
-    const dpsTeacher = await TeacherModel.findOne({ schoolName: 'Delhi Public School' });
-    if (!dpsTeacher) {
-      const newTeacher = await TeacherModel.create({
-        name: 'Dr. Sunita Rao',
-        email: 'sunita.rao@dps.edu',
-        password: 'password123',
-        schoolName: 'Delhi Public School',
-        assignedClass: 'Class 9',
-        assignedSection: 'A',
-        subjectSpecialization: 'Science & Mathematics',
-        role: 'Class Teacher',
-      });
-      await StudentModel.create([
-        {
-          teacherId: newTeacher._id.toString(),
-          teacherEmail: newTeacher.email,
-          schoolName: 'Delhi Public School',
-          rollNo: '301',
-          name: 'Aarav Gupta',
-          className: 'Class 9',
-          section: 'A',
-          gender: 'Male',
-          subjects: { maths: 95, science: 92, english: 89, hindi: 88, socialScience: 90 },
-          totalMarks: 454,
-          maxTotalMarks: 500,
-          percentage: 90.8,
-          grade: 'A+',
-          status: 'Pass',
-          remarks: 'Outstanding conceptual clarity.',
-          studentPin: '123$301',
-        },
-        {
-          teacherId: newTeacher._id.toString(),
-          teacherEmail: newTeacher.email,
-          schoolName: 'Delhi Public School',
-          rollNo: '302',
-          name: 'Diya Sen',
-          className: 'Class 9',
-          section: 'A',
-          gender: 'Female',
-          subjects: { maths: 88, science: 85, english: 94, hindi: 91, socialScience: 86 },
-          totalMarks: 444,
-          maxTotalMarks: 500,
-          percentage: 88.8,
-          grade: 'A',
-          status: 'Pass',
-          remarks: 'Excellent in Languages and Science.',
-          studentPin: '123$302',
-        },
-        {
-          teacherId: newTeacher._id.toString(),
-          teacherEmail: newTeacher.email,
-          schoolName: 'Delhi Public School',
-          rollNo: '303',
-          name: 'Kabir Mehta',
-          className: 'Class 9',
-          section: 'A',
-          gender: 'Male',
-          subjects: { maths: 76, science: 70, english: 80, hindi: 75, socialScience: 72 },
-          totalMarks: 373,
-          maxTotalMarks: 500,
-          percentage: 74.6,
-          grade: 'B',
-          status: 'Pass',
-          remarks: 'Good effort, consistent performance.',
-          studentPin: '123$303',
-        },
-      ]);
-      console.log('✅ Seeded demo school "Delhi Public School" (Class 9-A) with sample records.');
-    }
   } catch (syncErr) {
-    console.warn('School sync/seed note:', syncErr.message);
+    console.warn('School sync note:', syncErr.message);
   }
 
   app.listen(PORT, () => {

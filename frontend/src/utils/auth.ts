@@ -3,38 +3,22 @@ import { Teacher } from '../types/auth';
 const TEACHERS_STORAGE_KEY = 'edugrade_registered_teachers_v1';
 const CURRENT_USER_STORAGE_KEY = 'edugrade_current_teacher_session_v1';
 
-export const DEFAULT_DEMO_TEACHER: Teacher = {
-  id: 'teacher_demo_10a',
-  name: 'Rajesh Sharma',
-  email: 'teacher@school.edu',
-  password: 'password123',
-  schoolName: 'Delhi Public School',
-  assignedClass: 'Class 10',
-  assignedSection: 'A',
-  subjectSpecialization: 'Mathematics & Science',
-  role: 'Class Teacher',
-  createdAt: new Date().toISOString(),
-};
-
 export function getRegisteredTeachers(): Teacher[] {
   try {
     const raw = localStorage.getItem(TEACHERS_STORAGE_KEY);
     if (!raw) {
-      localStorage.setItem(TEACHERS_STORAGE_KEY, JSON.stringify([DEFAULT_DEMO_TEACHER]));
-      return [DEFAULT_DEMO_TEACHER];
+      return [];
     }
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
+    if (Array.isArray(parsed)) {
       return parsed;
     }
-    localStorage.setItem(TEACHERS_STORAGE_KEY, JSON.stringify([DEFAULT_DEMO_TEACHER]));
-    return [DEFAULT_DEMO_TEACHER];
+    return [];
   } catch (err) {
     console.error('Failed to load registered teachers:', err);
-    return [DEFAULT_DEMO_TEACHER];
+    return [];
   }
 }
-
 
 export function getCurrentTeacherSession(): Teacher | null {
   try {

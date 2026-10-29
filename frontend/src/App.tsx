@@ -128,128 +128,7 @@ export function App() {
     }
   };
 
-  // Handler: Load Sample Student Data
-  const handleLoadSampleData = async () => {
-    if (!currentTeacher) return;
-    try {
-      const sampleList: Student[] = [
-        {
-          id: `sample_${Date.now()}_1`,
-          teacherId: currentTeacher.id,
-          teacherEmail: currentTeacher.email,
-          rollNo: '101',
-          name: 'Aarav Sharma',
-          className: currentTeacher.assignedClass,
-          section: currentTeacher.assignedSection,
-          gender: 'Male',
-          subjects: { maths: 92, science: 95, english: 88, hindi: 84, socialScience: 91 },
-          totalMarks: 450,
-          maxTotalMarks: 500,
-          percentage: 90,
-          grade: 'A+',
-          status: 'Pass',
-          remarks: 'Outstanding performance! Consistently top of the class.',
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: `sample_${Date.now()}_2`,
-          teacherId: currentTeacher.id,
-          teacherEmail: currentTeacher.email,
-          rollNo: '102',
-          name: 'Priya Patel',
-          className: currentTeacher.assignedClass,
-          section: currentTeacher.assignedSection,
-          gender: 'Female',
-          subjects: { maths: 85, science: 89, english: 92, hindi: 90, socialScience: 84 },
-          totalMarks: 440,
-          maxTotalMarks: 500,
-          percentage: 88,
-          grade: 'A',
-          status: 'Pass',
-          remarks: 'Excellent comprehension and disciplined coursework.',
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: `sample_${Date.now()}_3`,
-          teacherId: currentTeacher.id,
-          teacherEmail: currentTeacher.email,
-          rollNo: '103',
-          name: 'Rohan Verma',
-          className: currentTeacher.assignedClass,
-          section: currentTeacher.assignedSection,
-          gender: 'Male',
-          subjects: { maths: 74, science: 68, english: 72, hindi: 78, socialScience: 70 },
-          totalMarks: 362,
-          maxTotalMarks: 500,
-          percentage: 72.4,
-          grade: 'B',
-          status: 'Pass',
-          remarks: 'Good progress. Needs to focus a bit more on Science concepts.',
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: `sample_${Date.now()}_4`,
-          teacherId: currentTeacher.id,
-          teacherEmail: currentTeacher.email,
-          rollNo: '104',
-          name: 'Ananya Gupta',
-          className: currentTeacher.assignedClass,
-          section: currentTeacher.assignedSection,
-          gender: 'Female',
-          subjects: { maths: 62, science: 58, english: 65, hindi: 70, socialScience: 60 },
-          totalMarks: 315,
-          maxTotalMarks: 500,
-          percentage: 63,
-          grade: 'C',
-          status: 'Pass',
-          remarks: 'Satisfactory. Regular practice in Maths will improve scores.',
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: `sample_${Date.now()}_5`,
-          teacherId: currentTeacher.id,
-          teacherEmail: currentTeacher.email,
-          rollNo: '105',
-          name: 'Vikram Singh',
-          className: currentTeacher.assignedClass,
-          section: currentTeacher.assignedSection,
-          gender: 'Male',
-          subjects: { maths: 28, science: 45, english: 52, hindi: 50, socialScience: 48 },
-          totalMarks: 223,
-          maxTotalMarks: 500,
-          percentage: 44.6,
-          grade: 'F',
-          status: 'Fail',
-          remarks: 'Failed in Mathematics (<33). Needs remedial coaching and re-test.',
-          createdAt: new Date().toISOString(),
-        },
-      ];
 
-      for (const item of sampleList) {
-        await apiCreateStudent(
-          {
-            rollNo: item.rollNo,
-            name: item.name,
-            className: item.className,
-            section: item.section,
-            gender: item.gender || 'Male',
-            maths: item.subjects.maths,
-            science: item.subjects.science,
-            english: item.subjects.english,
-            hindi: item.subjects.hindi,
-            socialScience: item.subjects.socialScience,
-            remarks: item.remarks,
-          },
-          currentTeacher
-        );
-      }
-
-      setStudents(sampleList);
-      showToast('Sample student records loaded successfully!');
-    } catch {
-      showToast('Failed to load sample data.', 'error');
-    }
-  };
 
   // If in Student Result Portal mode, show the Student Section directly
   if (viewMode === 'student_portal') {
@@ -370,7 +249,6 @@ export function App() {
               setViewingReportStudent(student);
               setViewingReportTeacher(currentTeacher);
             }}
-            onLoadSampleData={handleLoadSampleData}
           />
         ) : (
           <StudentTable

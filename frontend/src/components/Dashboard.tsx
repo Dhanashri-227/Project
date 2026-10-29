@@ -33,7 +33,6 @@ interface DashboardProps {
   onOpenAddModal: () => void;
   onNavigateToStudents: () => void;
   onViewReportCard: (student: Student) => void;
-  onLoadSampleData?: () => void;
 }
 
 const GRADE_COLORS: Record<string, string> = {
@@ -51,7 +50,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
   onOpenAddModal,
   onNavigateToStudents,
   onViewReportCard,
-  onLoadSampleData,
 }) => {
   const stats = computeDashboardStats(students);
 
@@ -146,14 +144,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
               <Users className="w-4 h-4" />
               <span>Classroom Students ({students.length})</span>
             </button>
-            {students.length === 0 && onLoadSampleData && (
-              <button
-                onClick={onLoadSampleData}
-                className="inline-flex items-center space-x-2 px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-semibold text-sm shadow-md transition-all"
-              >
-                <span>⚡ Load 5 Sample Records</span>
-              </button>
-            )}
           </div>
         </div>
 

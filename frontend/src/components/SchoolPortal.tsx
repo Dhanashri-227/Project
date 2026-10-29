@@ -312,7 +312,7 @@ export const SchoolPortal: React.FC<SchoolPortalProps> = ({
                 <Search className="w-4 h-4 text-emerald-300 absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   type="text"
-                  placeholder="Search school name (e.g. xyz, Delhi Public School)..."
+                  placeholder="Search school name (e.g. xyz)..."
                   value={schoolSearch}
                   onChange={(e) => setSchoolSearch(e.target.value)}
                   className="w-full pl-10 pr-4 py-2.5 bg-slate-950/60 border border-emerald-400/30 rounded-xl text-xs sm:text-sm text-white placeholder-emerald-200/50 focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:bg-slate-950/80 transition-all shadow-inner"

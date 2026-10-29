@@ -560,24 +560,6 @@ export async function apiGetSchools(): Promise<SchoolSummary[]> {
         },
       ],
     },
-    {
-      schoolName: 'Delhi Public School',
-      totalStudents: 3,
-      totalClasses: 1,
-      passPercentage: 100,
-      classes: [
-        {
-          className: 'Class 9',
-          section: 'A',
-          teacherName: 'Dr. Sunita Rao',
-          teacherEmail: 'sunita.rao@dps.edu',
-          studentCount: 3,
-          passCount: 3,
-          failCount: 0,
-          avgPercentage: 84.7,
-        },
-      ],
-    },
   ];
   return fallbackSchools;
 }
@@ -721,8 +703,8 @@ export async function apiGetSchoolClassResult(
       assignedClass: className,
       assignedSection: section,
     },
-    count: matched.length > 0 ? matched.length : INITIAL_SAMPLE_STUDENTS.length,
-    data: matched.length > 0 ? matched : INITIAL_SAMPLE_STUDENTS,
+    count: matched.length,
+    data: matched,
   };
 }
 

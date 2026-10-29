@@ -1,40 +1,23 @@
 {
   "name": "student-marks-portal",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
-    "client": "vite",
-    "server": "node --watch server/server.js",
-    "db": "\"C:\\Program Files\\MongoDB\\Server\\8.0\\bin\\mongod.exe\" --config \"C:\\Program Files\\MongoDB\\Server\\8.0\\bin\\mongod.cfg\"",
-    "build": "vite build",
-    "preview": "vite preview",
-    "lint": "eslint src --ext .ts,.tsx",
-    "type-check": "tsc --noEmit"
-  },
-  "dependencies": {
-    "concurrently": "^10.0.5",
-    "cors": "^2.8.6",
-    "dotenv": "^18.0.6",
-    "express": "^5.2.1",
-    "lucide-react": "^0.378.0",
-    "mongoose": "^9.11.1",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "recharts": "^2.12.0"
+    "client": "npm --prefix frontend run dev",
+    "server": "npm --prefix backend run dev",
+    "frontend": "npm --prefix frontend run dev",
+    "backend": "npm --prefix backend run dev",
+    "build": "npm --prefix frontend run build",
+    "type-check": "npm --prefix frontend run type-check",
+    "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install"
   },
   "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "@vitejs/plugin-react": "^4.3.0",
-    "autoprefixer": "^10.4.14",
-    "eslint": "^8.57.0",
-    "eslint-plugin-react": "^7.35.0",
-    "eslint-plugin-react-hooks": "^4.6.0",
-    "postcss": "^8.4.31",
-    "tailwindcss": "^3.4.0",
-    "typescript": "^5.5.0",
-    "vite": "^5.4.0"
+    "concurrently": "^10.0.5"
   }
 }
