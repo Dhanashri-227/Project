@@ -11,6 +11,7 @@ import { StudentModel } from './models/Student.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '.env') });
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -670,48 +671,46 @@ app.delete('/api/students/:id', async (req, res) => {
 // Start Server & Connect Database
 async function startServer() {
   const connected = await connectDB();
-  if (!connected) {
-    console.error('Backend server not started because MongoDB is unavailable.');
-    process.exitCode = 1;
-    return;
-  }
-
-  // Automatic PIN migration: update any student with '1234' or missing pin to 123$<rollNo>
-  try {
-    const legacyStudents = await StudentModel.find({
-      $or: [
-        { studentPin: '1234' },
-        { studentPin: '' },
-        { studentPin: { $exists: false } },
-      ],
-    });
-    for (const s of legacyStudents) {
-      if (s.rollNo) {
-        s.studentPin = `123$${s.rollNo}`;
-        await s.save();
+  if (connected) {
+    // Automatic PIN migration: update any student with '1234' or missing pin to 123$<rollNo>
+    try {
+      const legacyStudents = await StudentModel.find({
+        $or: [
+          { studentPin: '1234' },
+          { studentPin: '' },
+          { studentPin: { $exists: false } },
+        ],
+      });
+      for (const s of legacyStudents) {
+        if (s.rollNo) {
+          s.studentPin = `123$${s.rollNo}`;
+          await s.save();
+        }
       }
-    }
-    if (legacyStudents.length > 0) {
-      console.log(`✅ Migrated ${legacyStudents.length} student PIN(s) in MongoDB to 123$<rollNo> format.`);
-    }
-  } catch (migErr) {
-    console.warn('PIN migration check skipped:', migErr.message);
-  }
-
-  // Automatic migration: sync schoolName from teachers to students
-  try {
-    const allTeachers = await TeacherModel.find({});
-    for (const t of allTeachers) {
-      if (t.schoolName) {
-        await StudentModel.updateMany(
-          { teacherId: t._id.toString(), $or: [{ schoolName: '' }, { schoolName: { $exists: false } }] },
-          { $set: { schoolName: t.schoolName } }
-        );
+      if (legacyStudents.length > 0) {
+        console.log(`✅ Migrated ${legacyStudents.length} student PIN(s) in MongoDB to 123$<rollNo> format.`);
       }
+    } catch (migErr) {
+      console.warn('PIN migration check skipped:', migErr.message);
     }
 
-  } catch (syncErr) {
-    console.warn('School sync note:', syncErr.message);
+    // Automatic migration: sync schoolName from teachers to students
+    try {
+      const allTeachers = await TeacherModel.find({});
+      for (const t of allTeachers) {
+        if (t.schoolName) {
+          await StudentModel.updateMany(
+            { teacherId: t._id.toString(), $or: [{ schoolName: '' }, { schoolName: { $exists: false } }] },
+            { $set: { schoolName: t.schoolName } }
+          );
+        }
+      }
+    } catch (syncErr) {
+      console.warn('School sync note:', syncErr.message);
+    }
+  } else {
+    console.warn('⚠️ Server started in resilient fallback mode (MongoDB not connected).');
+    console.warn('💡 If using MongoDB Atlas, verify your IP is allowed in Atlas Network Access tab (or add 0.0.0.0/0).');
   }
 
   app.listen(PORT, () => {
