@@ -45,7 +45,7 @@ function escapeRegex(text) {
 async function syncSchoolData(schoolName, actionDescription = 'Data synchronized') {
   if (!schoolName) return null;
   const targetName = schoolName.trim();
-  if (!targetName) return null;
+  if (!targetName || targetName.toLowerCase() === 'class-result') return null;
 
   try {
     if (isMongooseConnected()) {
@@ -153,7 +153,7 @@ async function syncSchoolData(schoolName, actionDescription = 'Data synchronized
           lastUpdated: new Date(),
           lastAction: actionDescription,
         },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
+        { upsert: true, returnDocument: 'after', setDefaultsOnInsert: true }
       );
 
       console.log(`🏫 [School Schema Updated] "${targetName}" -> Total Students: ${schoolTotalStudents}, Classes: ${classes.length} (Trigger: ${actionDescription})`);
@@ -285,19 +285,29 @@ async function syncAllSchools(actionDescription = 'Full synchronization') {
     const schoolNamesSet = new Set();
 
     if (isMongooseConnected()) {
+      // Clean up any accidental 'class-result' document
+      try {
+        await SchoolModel.deleteMany({ schoolName: /^class-result$/i });
+      } catch (cleanErr) {
+        // ignore
+      }
+
       const teachers = await TeacherModel.find({}, 'schoolName').lean();
       teachers.forEach((t) => {
-        if (t.schoolName?.trim()) schoolNamesSet.add(t.schoolName.trim());
+        const sName = t.schoolName?.trim();
+        if (sName && sName.toLowerCase() !== 'class-result') schoolNamesSet.add(sName);
       });
 
       const students = await StudentModel.find({}, 'schoolName').lean();
       students.forEach((s) => {
-        if (s.schoolName?.trim()) schoolNamesSet.add(s.schoolName.trim());
+        const sName = s.schoolName?.trim();
+        if (sName && sName.toLowerCase() !== 'class-result') schoolNamesSet.add(sName);
       });
 
       const existingSchools = await SchoolModel.find({}, 'schoolName').lean();
       existingSchools.forEach((sc) => {
-        if (sc.schoolName?.trim()) schoolNamesSet.add(sc.schoolName.trim());
+        const sName = sc.schoolName?.trim();
+        if (sName && sName.toLowerCase() !== 'class-result') schoolNamesSet.add(sName);
       });
 
       if (schoolNamesSet.size === 0) {
@@ -309,11 +319,14 @@ async function syncAllSchools(actionDescription = 'Full synchronization') {
       }
       console.log(`✅ [School Sync Complete] Initialized ${schoolNamesSet.size} school(s) in School collection.`);
     } else {
+      inMemoryStore.schools = inMemoryStore.schools.filter((s) => s.schoolName.toLowerCase() !== 'class-result');
       inMemoryStore.teachers.forEach((t) => {
-        if (t.schoolName?.trim()) schoolNamesSet.add(t.schoolName.trim());
+        const sName = t.schoolName?.trim();
+        if (sName && sName.toLowerCase() !== 'class-result') schoolNamesSet.add(sName);
       });
       inMemoryStore.students.forEach((s) => {
-        if (s.schoolName?.trim()) schoolNamesSet.add(s.schoolName.trim());
+        const sName = s.schoolName?.trim();
+        if (sName && sName.toLowerCase() !== 'class-result') schoolNamesSet.add(sName);
       });
       if (schoolNamesSet.size === 0) {
         schoolNamesSet.add('Academic Institution');
@@ -516,7 +529,7 @@ app.put('/api/teachers/:id', async (req, res) => {
       if (assignedSection) updateData.assignedSection = assignedSection.trim();
       if (subjectSpecialization) updateData.subjectSpecialization = subjectSpecialization.trim();
 
-      const updated = await TeacherModel.findByIdAndUpdate(id, updateData, { new: true });
+      const updated = await TeacherModel.findByIdAndUpdate(id, updateData, { returnDocument: 'after' });
 
       // 🎯 UPDATE SCHOOL SCHEMA ON TEACHER ACTION
       await syncSchoolData(updated.schoolName, `Teacher updated: ${updated.name}`);
@@ -736,35 +749,7 @@ app.get('/api/schools', async (req, res) => {
   }
 });
 
-// Get individual school details by school name
-app.get('/api/schools/:schoolName', async (req, res) => {
-  try {
-    const { schoolName } = req.params;
-    const nameRegex = new RegExp(`^${escapeRegex(schoolName.trim())}$`, 'i');
-
-    if (isMongooseConnected()) {
-      let school = await SchoolModel.findOne({ schoolName: nameRegex }).lean();
-      if (!school) {
-        await syncSchoolData(schoolName, 'On-demand lookup sync');
-        school = await SchoolModel.findOne({ schoolName: nameRegex }).lean();
-      }
-      if (!school) {
-        return res.status(404).json({ success: false, message: `School "${schoolName}" not found` });
-      }
-      return res.json({ success: true, data: school });
-    }
-
-    const school = inMemoryStore.schools.find((s) => s.schoolName.toLowerCase() === schoolName.trim().toLowerCase());
-    if (!school) {
-      return res.status(404).json({ success: false, message: `School "${schoolName}" not found` });
-    }
-    res.json({ success: true, data: school });
-  } catch (err) {
-    res.status(500).json({ success: false, message: 'Error fetching school details', error: err.message });
-  }
-});
-
-// Get all student results for a specific school, class, and section
+// Get all student results for a specific school, class, and section (Registered before :schoolName)
 app.get('/api/schools/class-result', async (req, res) => {
   try {
     const { schoolName, className, section } = req.query;
@@ -831,6 +816,38 @@ app.get('/api/schools/class-result', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Error fetching class results', error: err.message });
+  }
+});
+
+// Get individual school details by school name
+app.get('/api/schools/:schoolName', async (req, res, next) => {
+  try {
+    const { schoolName } = req.params;
+    if (!schoolName || schoolName.toLowerCase() === 'class-result') {
+      return next();
+    }
+
+    const nameRegex = new RegExp(`^${escapeRegex(schoolName.trim())}$`, 'i');
+
+    if (isMongooseConnected()) {
+      let school = await SchoolModel.findOne({ schoolName: nameRegex }).lean();
+      if (!school) {
+        await syncSchoolData(schoolName, 'On-demand lookup sync');
+        school = await SchoolModel.findOne({ schoolName: nameRegex }).lean();
+      }
+      if (!school) {
+        return res.status(404).json({ success: false, message: `School "${schoolName}" not found` });
+      }
+      return res.json({ success: true, data: school });
+    }
+
+    const school = inMemoryStore.schools.find((s) => s.schoolName.toLowerCase() === schoolName.trim().toLowerCase());
+    if (!school) {
+      return res.status(404).json({ success: false, message: `School "${schoolName}" not found` });
+    }
+    res.json({ success: true, data: school });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Error fetching school details', error: err.message });
   }
 });
 
@@ -941,7 +958,7 @@ app.put('/api/students/:id', async (req, res) => {
       const previousSchoolName = previous.schoolName;
 
       const updated = await StudentModel.findOneAndUpdate(query, updateFields, {
-        new: true,
+        returnDocument: 'after',
         runValidators: true,
       });
 

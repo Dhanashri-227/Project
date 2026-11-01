@@ -53,7 +53,6 @@ const schoolSchema = new mongoose.Schema(
       required: true,
       unique: true,
       trim: true,
-      index: true,
     },
     totalStudents: {
       type: Number,
@@ -91,8 +90,5 @@ const schoolSchema = new mongoose.Schema(
     },
   }
 );
-
-// Compound/single indexes for fast lookup
-schoolSchema.index({ schoolName: 1 });
 
 export const SchoolModel = mongoose.model('School', schoolSchema);
