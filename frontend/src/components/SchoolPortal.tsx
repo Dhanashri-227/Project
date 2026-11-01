@@ -174,7 +174,7 @@ export const SchoolPortal: React.FC<SchoolPortalProps> = ({
   return (
     <div className="min-h-screen bg-slate-100 text-slate-900 flex flex-col font-sans selection:bg-indigo-500 selection:text-white">
       {/* Top Navbar */}
-      <header className="bg-gradient-to-r from-emerald-800 via-teal-900 to-slate-950 text-white shadow-xl sticky top-0 z-30 border-b border-emerald-700/40">
+      <header className="bg-slate-900 text-white shadow-md sticky top-0 z-30 border-b border-slate-800">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16 sm:h-20">
             {/* Logo */}

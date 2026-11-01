@@ -76,10 +76,27 @@ async function migrateData() {
       console.log(`✅ Successfully copied ${localStudents.length} student(s) to Atlas.`);
     }
 
+    // 3. Migrate Schools
+    console.log('\n🔍 Checking Schools collection...');
+    const localSchools = await localConn.collection('schools').find({}).toArray();
+    console.log(`📋 Found ${localSchools.length} school record(s) in local MongoDB.`);
+
+    if (localSchools.length > 0) {
+      for (const school of localSchools) {
+        await atlasConn.collection('schools').updateOne(
+          { _id: school._id },
+          { $set: school },
+          { upsert: true }
+        );
+      }
+      console.log(`✅ Successfully copied ${localSchools.length} school(s) to Atlas.`);
+    }
+
     console.log('\n====================================================');
     console.log('🎉 ALL DATA MIGRATED TO ATLAS SUCCESSFULLY!');
     console.log(`   - Teachers transferred: ${localTeachers.length}`);
     console.log(`   - Students transferred: ${localStudents.length}`);
+    console.log(`   - Schools transferred:  ${localSchools.length}`);
     console.log('====================================================');
   } catch (error) {
     console.error('❌ Error during data copy:', error.message);

@@ -140,7 +140,7 @@ export const StudentResultPortal: React.FC<StudentResultPortalProps> = ({
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
       {/* Top Header Banner */}
-      <header className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 text-white shadow-xl border-b border-indigo-900/50 print:hidden">
+      <header className="bg-slate-900 text-white shadow-md border-b border-slate-800 print:hidden">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-20">
             {/* Logo */}
@@ -206,9 +206,9 @@ export const StudentResultPortal: React.FC<StudentResultPortalProps> = ({
         {/* State 1: Secure Student Login Screen */}
         {!loggedInStudent ? (
           <div className="max-w-lg mx-auto py-6">
-            <div className="bg-white rounded-3xl p-6 sm:p-10 shadow-2xl border border-slate-200 relative overflow-hidden">
-              {/* Decorative top accent */}
-              <div className="absolute top-0 left-0 right-0 h-2 bg-gradient-to-r from-indigo-600 via-teal-500 to-amber-400" />
+            <div className="bg-white rounded-2xl p-6 sm:p-8 shadow-sm border border-slate-200">
+
+
 
               <div className="text-center mb-8">
                 <div className="inline-flex items-center justify-center p-3.5 bg-indigo-50 border border-indigo-200 rounded-2xl mb-3 shadow-inner">

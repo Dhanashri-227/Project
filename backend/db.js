@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { TeacherModel } from './models/Teacher.js';
 import { StudentModel } from './models/Student.js';
+import { SchoolModel } from './models/School.js';
 
 const DEFAULT_ATLAS_URI = 'mongodb+srv://dhanshri1701_db_user:qLwo6FwxYyrrtTBc@cluster0.xrna8qo.mongodb.net/marks?retryWrites=true&w=majority';
 
@@ -12,7 +13,7 @@ export async function connectDB(mongoUri) {
     await mongoose.connect(URI, {
       serverSelectionTimeoutMS: 15000,
     });
-    console.log('✅ MongoDB connected successfully to database: marks (Collection: students & teachers)');
+    console.log('✅ MongoDB connected successfully to database: marks (Collections: students, teachers, schools)');
     return true;
   } catch (err) {
     console.warn('⚠️  MongoDB Connection Warning:', err.message);
@@ -24,6 +25,7 @@ export async function connectDB(mongoUri) {
 export async function clearAllStudentData() {
   if (mongoose.connection.readyState === 1) {
     await StudentModel.deleteMany({});
+    await SchoolModel.deleteMany({});
   }
   return [];
 }

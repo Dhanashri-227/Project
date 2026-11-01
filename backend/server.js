@@ -3,10 +3,12 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { connectDB } from './db.js';
 import { TeacherModel } from './models/Teacher.js';
 import { StudentModel } from './models/Student.js';
+import { SchoolModel } from './models/School.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,9 +25,311 @@ app.use(express.json());
 const inMemoryStore = {
   teachers: [],
   students: [],
+  schools: [],
 };
 
 const isMongooseConnected = () => mongoose.connection.readyState === 1;
+
+// Helper to escape regex special characters
+function escapeRegex(text) {
+  return String(text).replace(/[-[\]{}()*+?.,\\^$|#\s]/g, '\\$&');
+}
+
+// =========================================================================
+// 🏫 SCHOOL SCHEMA SYNCHRONIZATION SERVICE
+// The School schema is updated ONLY when a Student is updated/added/deleted
+// or when a Teacher performs an action (register/update).
+// =========================================================================
+
+// Synchronize School Document for a specific school
+async function syncSchoolData(schoolName, actionDescription = 'Data synchronized') {
+  if (!schoolName) return null;
+  const targetName = schoolName.trim();
+  if (!targetName) return null;
+
+  try {
+    if (isMongooseConnected()) {
+      const nameRegex = new RegExp(`^${escapeRegex(targetName)}$`, 'i');
+
+      // 1. Fetch all teachers for this school
+      const teachers = await TeacherModel.find({ schoolName: nameRegex }).lean();
+      const teacherIds = teachers.map((t) => t._id.toString());
+
+      // 2. Fetch all students belonging to this school or its registered teachers
+      const students = await StudentModel.find({
+        $or: [
+          { schoolName: nameRegex },
+          { teacherId: { $in: teacherIds } },
+        ],
+      }).lean();
+
+      // 3. Build Class summaries
+      const classesMap = new Map();
+
+      // Register classes from teachers
+      teachers.forEach((t) => {
+        const classKey = `${t.assignedClass}__${t.assignedSection}`;
+        if (!classesMap.has(classKey)) {
+          classesMap.set(classKey, {
+            className: t.assignedClass,
+            section: t.assignedSection,
+            teacherId: t._id ? t._id.toString() : '',
+            teacherName: t.name || 'Class Teacher',
+            teacherEmail: t.email || '',
+            studentCount: 0,
+            passCount: 0,
+            failCount: 0,
+            avgPercentage: 0,
+            _totalPercentage: 0,
+          });
+        }
+      });
+
+      let schoolTotalStudents = 0;
+      let schoolPassCount = 0;
+
+      // Aggregate student marks into class summaries
+      students.forEach((s) => {
+        const classKey = `${s.className}__${s.section}`;
+        if (!classesMap.has(classKey)) {
+          const matchedTeacher = teachers.find(
+            (t) => t._id && t._id.toString() === s.teacherId?.toString()
+          );
+          classesMap.set(classKey, {
+            className: s.className,
+            section: s.section,
+            teacherId: matchedTeacher?._id ? matchedTeacher._id.toString() : (s.teacherId || ''),
+            teacherName: matchedTeacher?.name || 'Class Teacher',
+            teacherEmail: matchedTeacher?.email || s.teacherEmail || '',
+            studentCount: 0,
+            passCount: 0,
+            failCount: 0,
+            avgPercentage: 0,
+            _totalPercentage: 0,
+          });
+        }
+
+        const cls = classesMap.get(classKey);
+        cls.studentCount += 1;
+        if (s.status === 'Pass') {
+          cls.passCount += 1;
+          schoolPassCount += 1;
+        } else {
+          cls.failCount += 1;
+        }
+        cls._totalPercentage = (cls._totalPercentage || 0) + Number(s.percentage || 0);
+        schoolTotalStudents += 1;
+      });
+
+      // Format class list
+      const classes = Array.from(classesMap.values())
+        .map((c) => ({
+          className: c.className,
+          section: c.section,
+          teacherId: c.teacherId,
+          teacherName: c.teacherName,
+          teacherEmail: c.teacherEmail,
+          studentCount: c.studentCount,
+          passCount: c.passCount,
+          failCount: c.failCount,
+          avgPercentage: c.studentCount > 0 ? Number((c._totalPercentage / c.studentCount).toFixed(1)) : 0,
+        }))
+        .sort((a, b) => a.className.localeCompare(b.className) || a.section.localeCompare(b.section));
+
+      const passPercentage =
+        schoolTotalStudents > 0
+          ? Number(((schoolPassCount / schoolTotalStudents) * 100).toFixed(1))
+          : 0;
+
+      // 4. Update the School Schema document
+      const updatedSchool = await SchoolModel.findOneAndUpdate(
+        { schoolName: nameRegex },
+        {
+          schoolName: targetName,
+          totalStudents: schoolTotalStudents,
+          totalClasses: classes.length,
+          passPercentage,
+          classes,
+          lastUpdated: new Date(),
+          lastAction: actionDescription,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+
+      console.log(`🏫 [School Schema Updated] "${targetName}" -> Total Students: ${schoolTotalStudents}, Classes: ${classes.length} (Trigger: ${actionDescription})`);
+      return updatedSchool;
+    }
+
+    // In-Memory Fallback Sync
+    return syncSchoolDataInMemory(targetName, actionDescription);
+  } catch (err) {
+    console.error(`❌ Error updating School schema for "${targetName}":`, err.message);
+    return null;
+  }
+}
+
+// In-Memory Fallback School synchronization
+function syncSchoolDataInMemory(schoolName, actionDescription = 'Data synchronized') {
+  if (!schoolName) return null;
+  const targetName = schoolName.trim();
+  const lowerName = targetName.toLowerCase();
+
+  const teachers = inMemoryStore.teachers.filter(
+    (t) => (t.schoolName || 'Academic Institution').toLowerCase() === lowerName
+  );
+  const teacherIds = teachers.map((t) => (t._id ? t._id.toString() : t.id));
+
+  const students = inMemoryStore.students.filter((s) => {
+    const sName = (s.schoolName || '').toLowerCase();
+    return sName === lowerName || teacherIds.includes(s.teacherId);
+  });
+
+  const classesMap = new Map();
+  teachers.forEach((t) => {
+    const classKey = `${t.assignedClass}__${t.assignedSection}`;
+    if (!classesMap.has(classKey)) {
+      classesMap.set(classKey, {
+        className: t.assignedClass,
+        section: t.assignedSection,
+        teacherId: t.id || t._id,
+        teacherName: t.name || 'Class Teacher',
+        teacherEmail: t.email || '',
+        studentCount: 0,
+        passCount: 0,
+        failCount: 0,
+        avgPercentage: 0,
+        _totalPercentage: 0,
+      });
+    }
+  });
+
+  let schoolTotalStudents = 0;
+  let schoolPassCount = 0;
+
+  students.forEach((s) => {
+    const classKey = `${s.className}__${s.section}`;
+    if (!classesMap.has(classKey)) {
+      const matchedTeacher = teachers.find((t) => (t.id || t._id) === s.teacherId);
+      classesMap.set(classKey, {
+        className: s.className,
+        section: s.section,
+        teacherId: matchedTeacher?.id || matchedTeacher?._id || s.teacherId || '',
+        teacherName: matchedTeacher?.name || 'Class Teacher',
+        teacherEmail: matchedTeacher?.email || s.teacherEmail || '',
+        studentCount: 0,
+        passCount: 0,
+        failCount: 0,
+        avgPercentage: 0,
+        _totalPercentage: 0,
+      });
+    }
+
+    const cls = classesMap.get(classKey);
+    cls.studentCount += 1;
+    if (s.status === 'Pass') {
+      cls.passCount += 1;
+      schoolPassCount += 1;
+    } else {
+      cls.failCount += 1;
+    }
+    cls._totalPercentage = (cls._totalPercentage || 0) + Number(s.percentage || 0);
+    schoolTotalStudents += 1;
+  });
+
+  const classes = Array.from(classesMap.values())
+    .map((c) => ({
+      className: c.className,
+      section: c.section,
+      teacherId: c.teacherId,
+      teacherName: c.teacherName,
+      teacherEmail: c.teacherEmail,
+      studentCount: c.studentCount,
+      passCount: c.passCount,
+      failCount: c.failCount,
+      avgPercentage: c.studentCount > 0 ? Number((c._totalPercentage / c.studentCount).toFixed(1)) : 0,
+    }))
+    .sort((a, b) => a.className.localeCompare(b.className) || a.section.localeCompare(b.section));
+
+  const passPercentage =
+    schoolTotalStudents > 0
+      ? Number(((schoolPassCount / schoolTotalStudents) * 100).toFixed(1))
+      : 0;
+
+  const schoolObj = {
+    id: `school_${targetName.replace(/\s+/g, '_')}`,
+    _id: `school_${targetName.replace(/\s+/g, '_')}`,
+    schoolName: targetName,
+    totalStudents: schoolTotalStudents,
+    totalClasses: classes.length,
+    passPercentage,
+    classes,
+    lastUpdated: new Date().toISOString(),
+    lastAction: actionDescription,
+  };
+
+  const existingIdx = inMemoryStore.schools.findIndex(
+    (s) => s.schoolName.toLowerCase() === lowerName
+  );
+  if (existingIdx >= 0) {
+    inMemoryStore.schools[existingIdx] = schoolObj;
+  } else {
+    inMemoryStore.schools.push(schoolObj);
+  }
+
+  return schoolObj;
+}
+
+// Synchronize all schools (initial server startup or data migration)
+async function syncAllSchools(actionDescription = 'Full synchronization') {
+  try {
+    const schoolNamesSet = new Set();
+
+    if (isMongooseConnected()) {
+      const teachers = await TeacherModel.find({}, 'schoolName').lean();
+      teachers.forEach((t) => {
+        if (t.schoolName?.trim()) schoolNamesSet.add(t.schoolName.trim());
+      });
+
+      const students = await StudentModel.find({}, 'schoolName').lean();
+      students.forEach((s) => {
+        if (s.schoolName?.trim()) schoolNamesSet.add(s.schoolName.trim());
+      });
+
+      const existingSchools = await SchoolModel.find({}, 'schoolName').lean();
+      existingSchools.forEach((sc) => {
+        if (sc.schoolName?.trim()) schoolNamesSet.add(sc.schoolName.trim());
+      });
+
+      if (schoolNamesSet.size === 0) {
+        schoolNamesSet.add('Academic Institution');
+      }
+
+      for (const name of schoolNamesSet) {
+        await syncSchoolData(name, actionDescription);
+      }
+      console.log(`✅ [School Sync Complete] Initialized ${schoolNamesSet.size} school(s) in School collection.`);
+    } else {
+      inMemoryStore.teachers.forEach((t) => {
+        if (t.schoolName?.trim()) schoolNamesSet.add(t.schoolName.trim());
+      });
+      inMemoryStore.students.forEach((s) => {
+        if (s.schoolName?.trim()) schoolNamesSet.add(s.schoolName.trim());
+      });
+      if (schoolNamesSet.size === 0) {
+        schoolNamesSet.add('Academic Institution');
+      }
+      for (const name of schoolNamesSet) {
+        syncSchoolDataInMemory(name, actionDescription);
+      }
+    }
+  } catch (err) {
+    console.error('Error during syncAllSchools:', err.message);
+  }
+}
+
+// =========================================================================
+// 🚀 API ROUTES
+// =========================================================================
 
 // Health Check API
 app.get('/api/health', (req, res) => {
@@ -36,7 +340,7 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// --- TEACHER AUTHENTICATION APIS ---
+// --- TEACHER AUTHENTICATION & MANAGEMENT APIS ---
 
 // Teacher Login
 app.post('/api/auth/login', async (req, res) => {
@@ -90,7 +394,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Teacher Registration with Unique Classroom Check
+// Teacher Registration with Unique Classroom Check & School Schema Update
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { name, email, password, schoolName, assignedClass, assignedSection, subjectSpecialization } = req.body;
@@ -104,6 +408,7 @@ app.post('/api/auth/register', async (req, res) => {
     const targetClass = assignedClass || 'Class 10';
     const targetSection = assignedSection || 'A';
     const normalizedEmail = email.trim().toLowerCase();
+    const finalSchoolName = schoolName?.trim() || 'Academic Institution';
 
     if (isMongooseConnected()) {
       // 1. Check if email is already in use
@@ -132,12 +437,18 @@ app.post('/api/auth/register', async (req, res) => {
         name: name.trim(),
         email: normalizedEmail,
         password,
-        schoolName: schoolName?.trim() || 'Academic Institution',
+        schoolName: finalSchoolName,
         assignedClass: targetClass,
         assignedSection: targetSection,
         subjectSpecialization: subjectSpecialization?.trim() || 'Class Teacher',
         role: 'Class Teacher',
       });
+
+      // 🎯 UPDATE SCHOOL SCHEMA ON TEACHER ACTION
+      await syncSchoolData(
+        newTeacher.schoolName,
+        `Teacher registered: ${newTeacher.name} (${newTeacher.assignedClass} - ${newTeacher.assignedSection})`
+      );
 
       return res.status(201).json({
         success: true,
@@ -161,7 +472,7 @@ app.post('/api/auth/register', async (req, res) => {
       name: name.trim(),
       email: normalizedEmail,
       password,
-      schoolName: schoolName?.trim() || 'Academic Institution',
+      schoolName: finalSchoolName,
       assignedClass: targetClass,
       assignedSection: targetSection,
       subjectSpecialization: subjectSpecialization?.trim() || 'Class Teacher',
@@ -170,6 +481,12 @@ app.post('/api/auth/register', async (req, res) => {
     };
     inMemoryStore.teachers.push(newTeacher);
 
+    // 🎯 UPDATE SCHOOL SCHEMA IN FALLBACK
+    syncSchoolDataInMemory(
+      newTeacher.schoolName,
+      `Teacher registered: ${newTeacher.name} (${newTeacher.assignedClass} - ${newTeacher.assignedSection})`
+    );
+
     res.status(201).json({
       success: true,
       message: `Successfully registered as the designated Class Teacher for ${newTeacher.assignedClass} - Section ${newTeacher.assignedSection}!`,
@@ -177,6 +494,57 @@ app.post('/api/auth/register', async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Server error during registration', error: err.message });
+  }
+});
+
+// Teacher Profile Update (Updates teacher and triggers School schema update)
+app.put('/api/teachers/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, schoolName, assignedClass, assignedSection, subjectSpecialization } = req.body;
+
+    if (isMongooseConnected()) {
+      const previous = await TeacherModel.findById(id);
+      if (!previous) {
+        return res.status(404).json({ success: false, message: 'Teacher record not found' });
+      }
+
+      const updateData = {};
+      if (name) updateData.name = name.trim();
+      if (schoolName) updateData.schoolName = schoolName.trim();
+      if (assignedClass) updateData.assignedClass = assignedClass.trim();
+      if (assignedSection) updateData.assignedSection = assignedSection.trim();
+      if (subjectSpecialization) updateData.subjectSpecialization = subjectSpecialization.trim();
+
+      const updated = await TeacherModel.findByIdAndUpdate(id, updateData, { new: true });
+
+      // 🎯 UPDATE SCHOOL SCHEMA ON TEACHER ACTION
+      await syncSchoolData(updated.schoolName, `Teacher updated: ${updated.name}`);
+      if (previous.schoolName && previous.schoolName.toLowerCase() !== updated.schoolName.toLowerCase()) {
+        await syncSchoolData(previous.schoolName, `Teacher reassigned: ${updated.name}`);
+      }
+
+      return res.json({ success: true, message: 'Teacher updated successfully', teacher: updated });
+    }
+
+    // In-Memory Fallback
+    const index = inMemoryStore.teachers.findIndex((t) => t.id === id || t._id === id);
+    if (index === -1) {
+      return res.status(404).json({ success: false, message: 'Teacher record not found' });
+    }
+
+    const previous = inMemoryStore.teachers[index];
+    inMemoryStore.teachers[index] = { ...previous, ...req.body };
+    const updated = inMemoryStore.teachers[index];
+
+    syncSchoolDataInMemory(updated.schoolName, `Teacher updated: ${updated.name}`);
+    if (previous.schoolName && previous.schoolName.toLowerCase() !== updated.schoolName.toLowerCase()) {
+      syncSchoolDataInMemory(previous.schoolName, `Teacher reassigned: ${updated.name}`);
+    }
+
+    res.json({ success: true, message: 'Teacher updated successfully', teacher: updated });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Error updating teacher', error: err.message });
   }
 });
 
@@ -211,7 +579,7 @@ app.post('/api/students/auth/login', async (req, res) => {
         });
       }
 
-      // Security PIN validation (strictly 123$rollNo, 1234 is not accepted)
+      // Security PIN validation (strictly 123$rollNo)
       const expectedPin = (student.studentPin && student.studentPin !== '1234')
         ? student.studentPin
         : defaultExpectedPin;
@@ -279,7 +647,7 @@ app.post('/api/students/auth/login', async (req, res) => {
   }
 });
 
-// Search Student Result by Roll Number, Class, and Section (for Student Section)
+// Search Student Result by Roll Number, Class, and Section
 app.get('/api/students/result/search', async (req, res) => {
   try {
     const { rollNo, className, section } = req.query;
@@ -294,10 +662,7 @@ app.get('/api/students/result/search', async (req, res) => {
       if (className) query.className = className;
       if (section) query.section = section;
 
-      // Find student matching exact criteria
       let student = await StudentModel.findOne(query).sort({ createdAt: -1 });
-
-      // If not found with class/section, try matching rollNo directly
       if (!student && (className || section)) {
         student = await StudentModel.findOne({ rollNo: trimmedRoll }).sort({ createdAt: -1 });
       }
@@ -309,7 +674,6 @@ app.get('/api/students/result/search', async (req, res) => {
         });
       }
 
-      // Fetch teacher info if available
       let teacherInfo = null;
       if (student.teacherId) {
         teacherInfo = await TeacherModel.findOne({ _id: student.teacherId });
@@ -347,122 +711,56 @@ app.get('/api/students/result/search', async (req, res) => {
 
 // --- SCHOOL & CLASS RESULTS PORTAL APIS ---
 
-// Get all schools with their classes, teacher info, and performance summary
+// Get all schools directly from School collection (pre-computed, high performance)
 app.get('/api/schools', async (req, res) => {
   try {
-    let teachers = [];
-    let students = [];
-
     if (isMongooseConnected()) {
-      teachers = await TeacherModel.find({}).lean();
-      students = await StudentModel.find({}).lean();
-    } else {
-      teachers = inMemoryStore.teachers;
-      students = inMemoryStore.students;
+      let schools = await SchoolModel.find({}).sort({ schoolName: 1 }).lean();
+
+      // If School collection is empty but database has records, perform one-time auto-sync
+      if (schools.length === 0) {
+        await syncAllSchools('Initial Collection Initialization');
+        schools = await SchoolModel.find({}).sort({ schoolName: 1 }).lean();
+      }
+
+      return res.json({ success: true, count: schools.length, data: schools });
     }
 
-    const schoolMap = new Map();
-
-    // 1. Register classes from all teachers
-    teachers.forEach((t) => {
-      const sName = (t.schoolName || 'Academic Institution').trim();
-      if (!schoolMap.has(sName)) {
-        schoolMap.set(sName, {
-          schoolName: sName,
-          classesMap: new Map(),
-          totalStudents: 0,
-          passCount: 0,
-        });
-      }
-      const schoolObj = schoolMap.get(sName);
-      const classKey = `${t.assignedClass}__${t.assignedSection}`;
-      if (!schoolObj.classesMap.has(classKey)) {
-        schoolObj.classesMap.set(classKey, {
-          className: t.assignedClass,
-          section: t.assignedSection,
-          teacherId: t._id ? t._id.toString() : t.id,
-          teacherName: t.name,
-          teacherEmail: t.email,
-          studentCount: 0,
-          passCount: 0,
-          failCount: 0,
-          totalPercentage: 0,
-        });
-      }
-    });
-
-    // 2. Distribute and aggregate students
-    students.forEach((s) => {
-      let matchedTeacher = null;
-      if (s.teacherId) {
-        matchedTeacher = teachers.find(
-          (t) => (t._id && t._id.toString() === s.teacherId.toString()) || t.id === s.teacherId
-        );
-      }
-      const sName = (s.schoolName || matchedTeacher?.schoolName || 'Academic Institution').trim();
-      if (!schoolMap.has(sName)) {
-        schoolMap.set(sName, {
-          schoolName: sName,
-          classesMap: new Map(),
-          totalStudents: 0,
-          passCount: 0,
-        });
-      }
-      const schoolObj = schoolMap.get(sName);
-      const classKey = `${s.className}__${s.section}`;
-      if (!schoolObj.classesMap.has(classKey)) {
-        schoolObj.classesMap.set(classKey, {
-          className: s.className,
-          section: s.section,
-          teacherId: matchedTeacher?._id ? matchedTeacher._id.toString() : s.teacherId,
-          teacherName: matchedTeacher?.name || 'Class Teacher',
-          teacherEmail: matchedTeacher?.email || s.teacherEmail,
-          studentCount: 0,
-          passCount: 0,
-          failCount: 0,
-          totalPercentage: 0,
-        });
-      }
-      const clsObj = schoolObj.classesMap.get(classKey);
-      clsObj.studentCount += 1;
-      if (s.status === 'Pass') {
-        clsObj.passCount += 1;
-        schoolObj.passCount += 1;
-      } else {
-        clsObj.failCount += 1;
-      }
-      clsObj.totalPercentage += Number(s.percentage || 0);
-      schoolObj.totalStudents += 1;
-    });
-
-    // 3. Build response list
-    const result = Array.from(schoolMap.values()).map((s) => {
-      const classes = Array.from(s.classesMap.values())
-        .map((c) => ({
-          className: c.className,
-          section: c.section,
-          teacherId: c.teacherId,
-          teacherName: c.teacherName,
-          teacherEmail: c.teacherEmail,
-          studentCount: c.studentCount,
-          passCount: c.passCount,
-          failCount: c.failCount,
-          avgPercentage: c.studentCount > 0 ? Number((c.totalPercentage / c.studentCount).toFixed(1)) : 0,
-        }))
-        .sort((a, b) => a.className.localeCompare(b.className) || a.section.localeCompare(b.section));
-
-      return {
-        schoolName: s.schoolName,
-        totalStudents: s.totalStudents,
-        totalClasses: classes.length,
-        passPercentage: s.totalStudents > 0 ? Number(((s.passCount / s.totalStudents) * 100).toFixed(1)) : 0,
-        classes,
-      };
-    });
-
-    res.json({ success: true, count: result.length, data: result });
+    // In-Memory Fallback
+    if (inMemoryStore.schools.length === 0 && (inMemoryStore.teachers.length > 0 || inMemoryStore.students.length > 0)) {
+      await syncAllSchools('Initial Memory Initialization');
+    }
+    res.json({ success: true, count: inMemoryStore.schools.length, data: inMemoryStore.schools });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Error fetching schools', error: err.message });
+  }
+});
+
+// Get individual school details by school name
+app.get('/api/schools/:schoolName', async (req, res) => {
+  try {
+    const { schoolName } = req.params;
+    const nameRegex = new RegExp(`^${escapeRegex(schoolName.trim())}$`, 'i');
+
+    if (isMongooseConnected()) {
+      let school = await SchoolModel.findOne({ schoolName: nameRegex }).lean();
+      if (!school) {
+        await syncSchoolData(schoolName, 'On-demand lookup sync');
+        school = await SchoolModel.findOne({ schoolName: nameRegex }).lean();
+      }
+      if (!school) {
+        return res.status(404).json({ success: false, message: `School "${schoolName}" not found` });
+      }
+      return res.json({ success: true, data: school });
+    }
+
+    const school = inMemoryStore.schools.find((s) => s.schoolName.toLowerCase() === schoolName.trim().toLowerCase());
+    if (!school) {
+      return res.status(404).json({ success: false, message: `School "${schoolName}" not found` });
+    }
+    res.json({ success: true, data: school });
+  } catch (err) {
+    res.status(500).json({ success: false, message: 'Error fetching school details', error: err.message });
   }
 });
 
@@ -535,6 +833,10 @@ app.get('/api/schools/class-result', async (req, res) => {
     res.status(500).json({ success: false, message: 'Error fetching class results', error: err.message });
   }
 });
+
+// --- STUDENT CRUD APIS ---
+
+// Get Students for logged-in teacher
 app.get('/api/students', async (req, res) => {
   try {
     const { teacherId, className, section } = req.query;
@@ -559,7 +861,7 @@ app.get('/api/students', async (req, res) => {
   }
 });
 
-// Add New Student Marks
+// Add New Student Marks & Trigger School Schema Update
 app.post('/api/students', async (req, res) => {
   try {
     const studentData = req.body;
@@ -579,13 +881,24 @@ app.post('/api/students', async (req, res) => {
         const t = await TeacherModel.findById(studentData.teacherId);
         if (t && t.schoolName) studentData.schoolName = t.schoolName;
       } else {
-        const t = inMemoryStore.teachers.find((x) => x.id === studentData.teacherId);
+        const t = inMemoryStore.teachers.find((x) => x.id === studentData.teacherId || x._id === studentData.teacherId);
         if (t && t.schoolName) studentData.schoolName = t.schoolName;
       }
     }
 
+    if (!studentData.schoolName) {
+      studentData.schoolName = 'Academic Institution';
+    }
+
     if (isMongooseConnected()) {
       const created = await StudentModel.create(studentData);
+
+      // 🎯 UPDATE SCHOOL SCHEMA ON STUDENT ADD
+      await syncSchoolData(
+        created.schoolName,
+        `Student added: ${created.name} (Roll ${created.rollNo}) in ${created.className}-${created.section}`
+      );
+
       return res.status(201).json({ success: true, message: 'Student marks stored in database', data: created });
     }
 
@@ -597,13 +910,20 @@ app.post('/api/students', async (req, res) => {
       createdAt: studentData.createdAt || new Date().toISOString(),
     };
     inMemoryStore.students.unshift(newStudent);
+
+    // 🎯 UPDATE SCHOOL SCHEMA IN FALLBACK
+    syncSchoolDataInMemory(
+      newStudent.schoolName,
+      `Student added: ${newStudent.name} (Roll ${newStudent.rollNo})`
+    );
+
     res.status(201).json({ success: true, message: 'Student marks stored', data: newStudent });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Error adding student', error: err.message });
   }
 });
 
-// Update Existing Student Marks
+// Update Existing Student Marks & Trigger School Schema Update
 app.put('/api/students/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -613,13 +933,30 @@ app.put('/api/students/:id', async (req, res) => {
       const query = { _id: id };
       if (teacherId) query.teacherId = teacherId;
 
+      const previous = await StudentModel.findOne(query);
+      if (!previous) {
+        return res.status(404).json({ success: false, message: 'Student record not found' });
+      }
+
+      const previousSchoolName = previous.schoolName;
+
       const updated = await StudentModel.findOneAndUpdate(query, updateFields, {
         new: true,
         runValidators: true,
       });
 
-      if (!updated) {
-        return res.status(404).json({ success: false, message: 'Student record not found' });
+      // 🎯 UPDATE SCHOOL SCHEMA ON STUDENT UPDATE
+      await syncSchoolData(
+        updated.schoolName,
+        `Student updated: ${updated.name} (Roll ${updated.rollNo})`
+      );
+
+      // If student was moved between schools, update previous school as well
+      if (previousSchoolName && previousSchoolName.toLowerCase() !== updated.schoolName.toLowerCase()) {
+        await syncSchoolData(
+          previousSchoolName,
+          `Student transferred: ${updated.name}`
+        );
       }
 
       return res.json({ success: true, message: 'Student marks updated', data: updated });
@@ -630,20 +967,30 @@ app.put('/api/students/:id', async (req, res) => {
     if (index === -1) {
       const created = { id, _id: id, teacherId, ...updateFields };
       inMemoryStore.students.push(created);
+      syncSchoolDataInMemory(created.schoolName, `Student created: ${created.name}`);
       return res.json({ success: true, message: 'Student marks saved', data: created });
     }
 
+    const previousSchool = inMemoryStore.students[index].schoolName;
     inMemoryStore.students[index] = {
       ...inMemoryStore.students[index],
       ...updateFields,
     };
-    res.json({ success: true, message: 'Student marks updated', data: inMemoryStore.students[index] });
+    const updated = inMemoryStore.students[index];
+
+    // 🎯 UPDATE SCHOOL SCHEMA IN FALLBACK
+    syncSchoolDataInMemory(updated.schoolName, `Student updated: ${updated.name}`);
+    if (previousSchool && previousSchool.toLowerCase() !== updated.schoolName.toLowerCase()) {
+      syncSchoolDataInMemory(previousSchool, `Student transferred: ${updated.name}`);
+    }
+
+    res.json({ success: true, message: 'Student marks updated', data: updated });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Error updating student', error: err.message });
   }
 });
 
-// Delete Student Record
+// Delete Student Record & Trigger School Schema Update
 app.delete('/api/students/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -657,16 +1004,42 @@ app.delete('/api/students/:id', async (req, res) => {
       if (!deleted) {
         return res.status(404).json({ success: false, message: 'Student record not found' });
       }
+
+      // 🎯 UPDATE SCHOOL SCHEMA ON STUDENT DELETION
+      await syncSchoolData(
+        deleted.schoolName,
+        `Student deleted: ${deleted.name} (Roll ${deleted.rollNo})`
+      );
+
       return res.json({ success: true, message: 'Student record deleted' });
     }
 
     // In-Memory Fallback
+    const target = inMemoryStore.students.find((s) => s.id === id || s._id === id);
     inMemoryStore.students = inMemoryStore.students.filter((s) => s.id !== id && s._id !== id);
+
+    if (target) {
+      syncSchoolDataInMemory(target.schoolName, `Student deleted: ${target.name}`);
+    }
+
     res.json({ success: true, message: 'Student record deleted' });
   } catch (err) {
     res.status(500).json({ success: false, message: 'Error deleting student', error: err.message });
   }
 });
+
+// Serve frontend static assets in production or when dist folder exists
+const distPath = path.join(__dirname, '..', 'frontend', 'dist');
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  // Catch-all route handler for SPA (Express 5 compatible)
+  app.use((req, res, next) => {
+    if (req.method === 'GET' && !req.path.startsWith('/api')) {
+      return res.sendFile(path.join(distPath, 'index.html'));
+    }
+    next();
+  });
+}
 
 // Start Server & Connect Database
 async function startServer() {
@@ -708,9 +1081,21 @@ async function startServer() {
     } catch (syncErr) {
       console.warn('School sync note:', syncErr.message);
     }
+
+    // Initialize/Sync all schools into School Schema
+    try {
+      await syncAllSchools('Server startup initialization');
+    } catch (schoolInitErr) {
+      console.warn('School schema startup sync note:', schoolInitErr.message);
+    }
   } else {
     console.warn('⚠️ Server started in resilient fallback mode (MongoDB not connected).');
     console.warn('💡 If using MongoDB Atlas, verify your IP is allowed in Atlas Network Access tab (or add 0.0.0.0/0).');
+    try {
+      await syncAllSchools('Fallback memory startup initialization');
+    } catch (err) {
+      // ignore
+    }
   }
 
   app.listen(PORT, () => {
@@ -719,4 +1104,3 @@ async function startServer() {
 }
 
 startServer();
-

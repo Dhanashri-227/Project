@@ -8,10 +8,12 @@ import {
 } from '../utils/auth';
 import { getStoredStudents, saveStoredStudents, INITIAL_SAMPLE_STUDENTS } from '../utils/storage';
 
-const API_BASE_URL = '/api';
+// Support custom backend URL in production (e.g. Vercel frontend -> Render backend)
+const envApiUrl = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
+const API_BASE_URL = envApiUrl ? `${envApiUrl.replace(/\/+$/, '')}/api` : '/api';
 
 // Helper for fetch with timeout
-async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 2500): Promise<Response> {
+async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs = 12000): Promise<Response> {
   const controller = new AbortController();
   const id = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -30,7 +32,7 @@ async function fetchWithTimeout(url: string, options: RequestInit = {}, timeoutM
 // Check if Backend Server is reachable
 export async function checkBackendHealth(): Promise<boolean> {
   try {
-    const res = await fetchWithTimeout(`${API_BASE_URL}/health`, { method: 'GET' }, 1500);
+    const res = await fetchWithTimeout(`${API_BASE_URL}/health`, { method: 'GET' }, 5000);
     if (res.ok) {
       const data = await res.json();
       return data.status === 'online';
@@ -121,7 +123,7 @@ export async function apiGetStudents(teacher: Teacher): Promise<Student[]> {
       section: teacher.assignedSection || '',
     });
 
-    const res = await fetchWithTimeout(`${API_BASE_URL}/students?${query.toString()}`, {}, 2500);
+    const res = await fetchWithTimeout(`${API_BASE_URL}/students?${query.toString()}`, {}, 10000);
     if (res.ok) {
       const result = await res.json();
       if (result.success && Array.isArray(result.data)) {
@@ -519,7 +521,7 @@ export async function apiSearchStudentResult(
 // Fetch all registered schools with their classes
 export async function apiGetSchools(): Promise<SchoolSummary[]> {
   try {
-    const res = await fetchWithTimeout(`${API_BASE_URL}/schools`, {}, 3000);
+    const res = await fetchWithTimeout(`${API_BASE_URL}/schools`, {}, 10000);
     if (res.ok) {
       const result = await res.json();
       if (result.success && Array.isArray(result.data)) {
@@ -572,7 +574,7 @@ export async function apiGetSchoolClassResult(
 ): Promise<SchoolClassResultResponse> {
   try {
     const query = new URLSearchParams({ schoolName, className, section });
-    const res = await fetchWithTimeout(`${API_BASE_URL}/schools/class-result?${query.toString()}`, {}, 3000);
+    const res = await fetchWithTimeout(`${API_BASE_URL}/schools/class-result?${query.toString()}`, {}, 10000);
     if (res.ok) {
       const result = await res.json();
       if (result.success && Array.isArray(result.data)) {
